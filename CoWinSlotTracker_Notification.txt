@@ -1,0 +1,19 @@
+from pyfcm import FCMNotification
+import time
+
+def SendNotification(deviceID, msgBody, dataPayload):
+    print("in SendNotification API with dveiceID {0}, msgBody {1} and dataPayload {2}".format(deviceID,msgBody,dataPayload))
+    apiKey = "AAAAkr_rZlg:APA91bGhL8ftpFaumlUQFz1ODPSe2gL-8OAfjI28PsIVaPJ68rmFwal33IUi2OdawCq9eJdPIBgm3nZ6m0ySX4EHpMT1XC7UOOOHNmYivq1SK9yy_xqK1Gj4Y6z_zD2FEtl-dw1J-vRW"
+    pushMsg = FCMNotification(api_key = apiKey)
+    result = pushMsg.notify_single_device(registration_id = deviceID, message_body = msgBody, data_message = dataPayload)
+    
+    #call sendDataPayload function
+    SendDataPayload(deviceID, dataPayload)
+    print(result)
+    
+def SendDataPayload(deviceID, dataPayload):
+    print("in SendDataPayload API with dveiceID {0} and dataPayload {1}".format(deviceID,dataPayload))
+    apiKey = "AAAAkr_rZlg:APA91bGhL8ftpFaumlUQFz1ODPSe2gL-8OAfjI28PsIVaPJ68rmFwal33IUi2OdawCq9eJdPIBgm3nZ6m0ySX4EHpMT1XC7UOOOHNmYivq1SK9yy_xqK1Gj4Y6z_zD2FEtl-dw1J-vRW"
+    pushMsg = FCMNotification(api_key = apiKey)
+    result = pushMsg.notify_single_device(registration_id = deviceID, data_message = dataPayload)
+    print(result)

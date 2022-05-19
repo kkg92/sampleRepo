@@ -1,0 +1,99 @@
+import json
+import pyfcm
+from pymysqlpool.pool import Pool
+import traceback
+import sys
+
+#global variables for DB access
+endPoint = 'vactrackdb.cecpyuwbpdmi.ap-south-1.rds.amazonaws.com'
+userName = "admin"
+password = 'Aaroh!12#N'
+dbName = 'testDB'
+pool_obj = Pool(host = endPoint, port = 3306, user = userName, password = password, db = dbName, max_size=100)
+pool_obj.init()
+connection = pool_obj.get_conn()
+
+def delDeviceID(idList):
+    try:
+        print("in delDeviceID() function")
+        cursor = connection.cursor()
+        for id in idList:
+            if id != "":
+                pinQuery = "SELECT PinCode from DEVICEINFOCLONE where DeviceID = %s"
+                cursor.execute(pinQuery,id)
+                pincode = cursor.fetchall()[0]["PinCode"]
+                delQuery = "DELETE from DEVICEINFOCLONE where DeviceID = %s"
+                print("pincode is ",pincode)
+                print("id is ",id)
+                cursor.execute(delQuery, id)
+                connection.commit()
+                selectQuery = "SELECT DeviceID from DEVICEINFOCLONE where PinCode = %s"
+                cursor.execute(selectQuery, pincode)
+                rows = cursor.fetchall()
+                print("delDeviceID function : rows value is ",rows)
+                if len(rows) > 0:
+                    print("other devices have subscribed for this pincode ",pincode)
+                elif len(rows) == 0:
+                    print("in delDeviceID(): delete pincode {0} from SLOTDATACLONE as there is no longer subscription".format(pincode))
+                    delQuery = "DELETE from SLOTDATACLONE where PinCode = %s"
+                    cursor.execute(delQuery, pincode)
+                    connection.commit()
+        cursor.close()
+    except Exception as e:
+        print("Exception observed in delDeviceID function")
+        exc_info = sys.exc_info()
+        traceback.print_exception(*exc_info)
+        del exc_info
+            
+    
+def checkDeviceID():
+    print("in checkDeviceID() function")
+    try:
+        validIdList = list()
+        nonValidIDs = set()
+        apiKey = "AAAAkr_rZlg:APA91bGhL8ftpFaumlUQFz1ODPSe2gL-8OAfjI28PsIVaPJ68rmFwal33IUi2OdawCq9eJdPIBgm3nZ6m0ySX4EHpMT1XC7UOOOHNmYivq1SK9yy_xqK1Gj4Y6z_zD2FEtl-dw1J-vRW"
+        fcm_obj = pyfcm.FCMNotification(api_key = apiKey)
+        deviceIDList = getDeviceID()
+        if deviceIDList != None:
+            deviceIDList = list(set(deviceIDList))
+            validIdList = fcm_obj.clean_registration_ids(deviceIDList)
+            print("in checkDeviceID. value of validIdList is ",validIdList)
+        if len(validIdList) >= 1:
+            nonValidIDs = set(deviceIDList) - set(validIdList)
+            print("length of nonValidIDs is ",len(nonValidIDs))
+            print("nonValidIDs ",nonValidIDs)
+            if len(nonValidIDs) > 0:
+                delDeviceID(list(nonValidIDs))
+            else:
+                print("no nonValidIDs found")
+        else:
+            #pass
+            delDeviceID(deviceIDList)
+    except Exception as e:
+        print("Exception occured in checkDeviceID() ",str(e))
+        exc_info = sys.exc_info()
+        traceback.print_exception(*exc_info)
+        del exc_info
+    
+def getDeviceID():
+    print("in getDeviceID() function")
+    try:
+        deviceIDList = list()
+        cursor = connection.cursor()
+        query = "SELECT DeviceID from DEVICEINFOCLONE"
+        queryResult = cursor.execute(query)
+        if queryResult >= 1:
+            rows = cursor.fetchall()
+            deviceIDList = [row["DeviceID"] for row in rows]
+        cursor.close()
+        print("getDeviceID function. value os deviceIDList is ",len(deviceIDList))
+        return deviceIDList
+    except Exception as e:
+        print("Exception occured in getDeviceID() :",str(e))
+        cursor.close()
+        exc_info = sys.exc_info()
+        traceback.print_exception(*exc_info)
+        del exc_info
+
+def lambda_handler(event, context):
+    checkDeviceID()

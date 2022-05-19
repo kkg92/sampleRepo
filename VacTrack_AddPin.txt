@@ -1,0 +1,142 @@
+import pymysql
+from pymysqlpool.pool import Pool
+import json
+import traceback
+import sys
+import ast
+
+#user defined modules
+#import send_notification
+
+#global variables
+endPoint = 'vactrackdb.cecpyuwbpdmi.ap-south-1.rds.amazonaws.com'
+userName = "admin"
+password = 'Aaroh!12#N'
+dbName = 'testDB'
+pool_obj = Pool(host = endPoint, port = 3306, user = userName, password = password, db = dbName, max_size=100)
+pool_obj.init()
+connection = pool_obj.get_conn()
+
+def insertData(pincode, deviceID, ageGroup, vaccine):
+    #function return variable
+    response_object = dict()
+    response_object["statuscode"] = 200
+    response_object["headers"] = {}
+    response_object["headers"]["Content-Type"] = "application/json"
+    response_body_dict = {"key":pincode}
+    insertResponse = None
+    fetchResp = None
+    DataNAMsg = "Information not available now for the pincode "+str(pincode)+\
+    ". Sit back and relax!! We will update you in a minute or so."
+    filterList = list()
+    currentSessionIdList = list()
+    try:
+        print("in insertData() function")
+        cursor = connection.cursor()
+        #frame insert query
+        insertQuery = 'INSERT INTO DEVICEINFOCLONE(DeviceID,PinCode,AgeGroup,Vaccine,SessionIDList,SlotAvailable,SlotNA) VALUES(%s, %s, %s, %s, %s, %s, %s)'
+        values = (deviceID, pincode, ageGroup, vaccine, None, 0,0)
+        #execute the query
+        insertResponse = cursor.execute(insertQuery, values)
+        connection.commit()
+        if insertResponse > 0:
+            #insert data to SLOTDATACLONE table
+            fetchQuery = 'SELECT CenterData from SLOTDATACLONE where PinCode = %s'
+            fetchResp = cursor.execute(fetchQuery, pincode)
+            if fetchResp == 0:
+                print("pincode not present in SLOTDATACLONE")
+                #frame insert query
+                insertQuery = 'INSERT INTO SLOTDATACLONE(PinCode) VALUES(%s)'
+                values = (pincode)
+                cursor.execute(insertQuery, values)
+                connection.commit()
+                #send data to the device
+                response_body_dict["message"] = DataNAMsg
+                response_object["headers"]["body"] = response_body_dict
+            else:
+                print("PinCode already present in SLOTDATACLONE")
+                response = cursor.fetchall()
+                data = response[0]["CenterData"]
+                if data == None:
+                    response_body_dict["message"] = DataNAMsg
+                    response_object["headers"]["body"] = response_body_dict
+                elif data.startswith("[{"):
+                    data = ast.literal_eval(data)
+                    if ageGroup == "ALL" and vaccine == "ALL":
+                        print("ALL,ALL")
+                        response_body_dict["message"] = data
+                        for center in data:
+                            currentSessionIdList.append(center["Session ID"])
+                    elif ageGroup == "ALL":
+                        print("ageGroup ALL")
+                        for center in data:
+                            if center["Vaccine Name"] == vaccine.upper():
+                                filterList.append(center)
+                                currentSessionIdList.append(center["Session ID"])
+                        if len(filterList) > 0:
+                            response_body_dict["message"] = filterList
+                        else:
+                            response_body_dict["message"] = DataNAMsg
+                    elif vaccine == "ALL":
+                        print("vaccine ALL")
+                        for center in data:
+                            if str(center["Minimum Age Limit"]) == ageGroup:
+                                filterList.append(center)
+                                currentSessionIdList.append(center["Session ID"])
+                        if len(filterList) > 0:
+                            response_body_dict["message"] = filterList
+                        else:
+                            response_body_dict["message"] = DataNAMsg
+                    else:
+                        for center in data:
+                            print(center["Minimum Age Limit"], center["Vaccine Name"])
+                            if str(center["Minimum Age Limit"]) == ageGroup and center["Vaccine Name"] == vaccine.upper():
+                                filterList.append(center)
+                                currentSessionIdList.append(center["Session ID"])
+                        if len(filterList) > 0:
+                            response_body_dict["message"] = filterList
+                        else:
+                            response_body_dict["message"] = DataNAMsg
+                    response_object["headers"]["body"] = response_body_dict
+                    #Update SessionIDList, slotAvailable, slotNA in DB
+                    updateQuery = "update DEVICEINFOCLONE set SessionIDList = %s, SlotAvailable = %s where DeviceID = %s and PinCode = %s and AgeGroup = %s and Vaccine = %s"
+                    values = (str(currentSessionIdList), 1, deviceID, pincode, ageGroup, vaccine)
+                    cursor.execute(updateQuery, values)
+                    connection.commit()
+                else:
+                    response_body_dict["message"] = data
+                    response_object["headers"]["body"] = response_body_dict
+        #close the cursor
+        cursor.close()
+        #return statement
+        #response_object["headers"]["body"] = insertResponse
+        return response_object
+    except Exception as e:
+        print("Exception occured while inserting data to table SLOTDATACLONE ",str(e))
+        exc_info = sys.exc_info()
+        traceback.print_exception(*exc_info)
+        del exc_info
+        cursor.close()
+        #return statement
+        response_object["headers"]["body"] = 0
+        return response_object
+
+def lambda_handler(event, context):
+    try:
+        print("in lambda_handler function")
+        pincode = event["pincode"]
+        deviceID = event["deviceID"]
+        ageGroup = event["ageGroup"].upper().strip()
+        vaccine = event["vaccineName"].upper().strip()
+        print("vaccine",vaccine)
+        if ageGroup == None or ageGroup == "":
+            ageGroup = "ALL"
+        if vaccine == None or vaccine == "":
+            vaccine = "ALL"
+        response = insertData(pincode, deviceID, ageGroup, vaccine)
+        #pool_obj.release(connection)
+        return response
+    except Exception as e:
+        print("Exception occured",str(e))
+            
+  

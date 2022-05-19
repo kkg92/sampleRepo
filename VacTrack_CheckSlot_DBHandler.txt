@@ -1,0 +1,132 @@
+import pymysql
+from pymysqlpool.pool import Pool
+import traceback
+import sys
+from threading import *
+
+#global variables for DB access
+endPoint = 'vactrackdb.cecpyuwbpdmi.ap-south-1.rds.amazonaws.com'
+userName = "admin"
+password = 'Aaroh!12#N'
+dbName = 'testDB'
+pool_obj = Pool(host = endPoint, port = 3306, user = userName, password = password, db = dbName, max_size=100)
+pool_obj.init()
+connection = pool_obj.get_conn()
+#Semaphore object
+obj = Semaphore()
+
+#function to fetch list of pincode form database
+def fetchPinCode():
+    queryResponse = None
+    pincodeList = list()
+    print("in fetchPinCode() function")
+    #connect to the DB
+    cursor = connection.cursor()
+    #frame query to extract unique pincode
+    fetchPinQuery = "SELECT DISTINCT(PinCode) from DEVICEINFOCLONE"
+    #execute query
+    fetchPinResp = cursor.execute(fetchPinQuery)
+    if fetchPinResp >= 1:
+        queryResponse = cursor.fetchall()
+        pincodeList = [row['PinCode'] for row in queryResponse]
+    #close cursor
+    cursor.close()
+    #return pincodeList
+    return pincodeList
+    
+#function to fetch list of deviceID's subscribed for a pincode form DB
+def fetchDeviceID(pincode, args):
+    print("in fetchDeviceID() function with args", pincode, args)
+    try:
+        #local variables
+        deviceIDList = list()
+        if len(args) > 0:
+            age = args[0]
+            vaccine = args[1]
+            #frame query to extract deviceID's
+            fetchDeviceIDQuery = "SELECT DeviceID from DEVICEINFOCLONE where PinCode = %s and AgeGroup = %s and Vaccine = %s"
+            values = (pincode, age, vaccine)
+        else:
+            #frame query to extract deviceID's
+            fetchDeviceIDQuery = "SELECT DeviceID from DEVICEINFOCLONE where PinCode = %s"
+            values = (pincode)
+        #semaphore
+        obj.acquire()
+        #connect to the DB
+        cursor = connection.cursor()
+        fetchDeviceIDResp = cursor.execute(fetchDeviceIDQuery, values)
+        if fetchDeviceIDResp >= 1:
+            queryResponse = cursor.fetchall()
+            deviceIDList =  [row['DeviceID'] for row in queryResponse]
+        #close cursor
+        cursor.close()
+        #release sempahore resource
+        obj.release()
+        #return pincodeList
+        return deviceIDList
+    except IndexError as e:
+        print("IndexError Exception in fetchDeviceID() function ",str(e))
+    except Exception as e:
+        print("Exception in fetchDeviceID() function ",str(e))
+        exc_info = sys.exc_info()
+        traceback.print_exception(*exc_info)
+        del exc_info
+    
+def queryStateVariables(pincode, args):
+    print("in queryStateVariables() function with pincode ",pincode)
+    try:
+        #acquire sempahore resource
+        obj.acquire()
+        cursor = connection.cursor()
+        if len(args) > 0:
+            age = args[0]
+            vaccine = args[1]
+            query = "SELECT SlotAvailable,SlotNA,SessionIDList from DEVICEINFOCLONE where pincode = %s and AgeGroup = %s and Vaccine = %s"
+            values = (pincode, age, vaccine)
+            cursor.execute(query, values)
+            response = cursor.fetchall()
+        else:
+            query = "SELECT SlotAvailable,SlotNA,SessionIDList from DEVICEINFOCLONE where pincode = %s"
+            values = (pincode)
+            cursor.execute(query, values)
+            response = cursor.fetchall()
+        #close cursor
+        cursor.close()
+        #release sempahore resource
+        obj.release()
+        #return slotAvailable, slotNA
+        slotAvailable = response[0]["SlotAvailable"]
+        slotNA = response[0]["SlotNA"]
+        sessionIDList = response[0]["SessionIDList"]
+    except Exception as e:
+        print("Exception observed in queryStateVariables ",str(e))
+    return (slotAvailable,slotNA, sessionIDList)
+    
+def updateSlotData(data, pincode):
+    #update SLOTDATACLONE
+    query = "UPDATE SLOTDATACLONE SET CenterData = %s where PinCode = %s"
+    values = (data, pincode)
+    #acquire sempahore resource
+    obj.acquire()
+    cursor = connection.cursor()
+    cursor.execute(query, values)
+    connection.commit()
+    #close cursor
+    cursor.close()
+    #release sempahore resource
+    obj.release()
+    
+def updateDeviceInfo(pincode, deviceIDList, slotAvailable, slotNA, sessionIDList = None):
+    #update DEVICEINFOCLONE
+    #acquire sempahore resource
+    obj.acquire()
+    for devID in deviceIDList:
+        query = "UPDATE DEVICEINFOCLONE SET SlotAvailable = %s, SlotNA = %s, SessionIDList = %s where PinCode = %s and DeviceID = %s"
+        values = (slotAvailable, slotNA, sessionIDList, pincode, devID)
+        cursor = connection.cursor()
+        cursor.execute(query, values)
+        connection.commit()
+    #close cursor
+    cursor.close()
+    #release sempahore resource
+    obj.release()

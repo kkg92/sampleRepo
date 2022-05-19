@@ -1,0 +1,280 @@
+import os
+import sys
+import urllib.request as url
+from urllib.error import URLError
+from urllib.error import HTTPError
+import json
+import datetime
+import traceback
+from concurrent.futures import ThreadPoolExecutor
+
+#User defined modules
+import send_notification
+import database_handler
+
+def CheckAvailability(pincode, executor):
+    try:
+        print("in CheckAvailability function")
+        response_object = dict()
+        response_object["statuscode"] = 200
+        response_object["headers"] = {}
+        response_object["headers"]["Content-Type"] = "application/json"
+        response_body_dict = {"key":pincode, "alarm":0, "payload_number":1}
+        response_body_dict["message"] = "Sorry!! As google has blocked our App, we are not able to fetch any Data!!"
+        response_object["headers"]["body"] = response_body_dict
+        
+        deviceIDList = database_handler.fetchDeviceID(pincode, [])
+        send_notification.DataPayLoadMultipleDevices(deviceIDList, response_object)
+        
+        return
+        
+        #local variables
+        output_list = list()
+        response_object = dict()
+        response_object["statuscode"] = 200
+        response_object["headers"] = {}
+        response_object["headers"]["Content-Type"] = "application/json"
+        response_body_dict = {"key":pincode, "alarm":0, "payload_number":1}
+        
+        response = None
+        slotAvailable = None
+        slotNA = None
+        previousSessionIDList = list()
+        comboList = [["ALL","ALL"],["ALL","COVISHIELD"],["ALL","COVAXIN"],\
+                    ["18","ALL"],["18","COVISHIELD"],["18","COVAXIN"],\
+                    ["45","ALL"],["45","COVISHIELD"],["45","COVAXIN"]]
+        #check current date
+        date = datetime.date.today()
+        date_str = str(date.day)+"-"+str(date.month)+"-"+str(date.year)
+        
+        #check currentTime
+        currentHour = datetime.datetime.now().time().hour
+        currentMinute = datetime.datetime.now().time().minute
+        
+        webLink = "https://cdn-api.co-vin.in/api/v2/appointment/sessions/public/calendarByPin?pincode="+str(pincode)+"&date="+date_str
+        
+        #Error messages to the client
+        slotErrorMsg = "No vacant slots available till now for the pincode "+str(pincode)+\
+        ". Sit back and relax. I will keep a check and notify you as soon as slots are available."
+        centerErrorMsg = "Could not find a Vaccination center till now for the pincode "+str(pincode)+\
+        ". Sit back and relax. I will keep a check and inform you as soon as slots are available."
+
+        try:
+            req_obj = url.Request(url=webLink, data = None, headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)Chrome/90.0.4430.93 Safari/537.36"})
+            response = url.urlopen(req_obj)
+        except HTTPError as e:
+            httpErrorMsg = e.code
+            response_body_dict["message"] = "Not able to reach CoWin server!! Let me retry"
+            response_object["headers"]["body"] = response_body_dict
+            #fetch all device ID's for this pincode
+            deviceIDList = database_handler.fetchDeviceID(pincode, [])
+            send_notification.DataPayLoadMultipleDevices(deviceIDList, response_object)
+            return None
+        except URLError as e:
+            urlErrorMsg = e.reason[1]
+            response_body_dict["message"] = urlErrorMsg
+            response_object["headers"]["body"] = response_body_dict
+            #fetch all device ID's for this pincode
+            deviceIDList = database_handler.fetchDeviceID(pincode, [])
+            send_notification.DataPayLoadMultipleDevices(deviceIDList, response_object)
+            return None
+
+        response_dict = json.loads(response.read())
+        centers_list = response_dict["centers"]
+        if len(centers_list) > 0:
+            for center in centers_list:
+                for session in center["sessions"]:
+                    if session["available_capacity"] >= 1:
+                        center_available = dict()
+                        center_available["Centre Name"] = center["name"]
+                        center_available["Centre Address"] = center["address"]
+                        center_available["Date"] = session["date"]
+                        center_available["Slots available"] = session["available_capacity"]
+                        center_available["Dose1"] = session["available_capacity_dose1"]
+                        center_available["Dose2"] = session["available_capacity_dose2"]
+                        center_available["Vaccine Name"] = session["vaccine"]
+                        center_available["Minimum Age Limit"] = session["min_age_limit"]
+                        center_available["Session ID"] = session["session_id"]
+                        center_available["Fee Type"] = center["fee_type"]
+                        output_list.append(center_available)
+            if len(output_list) > 0:
+                #Update the database with latest data
+                print("Update DB table with updated results")
+                database_handler.updateSlotData(str(output_list), pincode)
+                for indFilter in comboList:
+                    executor.submit(filterInfo, indFilter, output_list, pincode, response_body_dict, response_object, slotErrorMsg)
+            else:
+                #fetch device Id's for the pincode
+                deviceIDList = database_handler.fetchDeviceID(pincode, [])
+                #fetch slot info for the pincode
+                slotAvailable, slotNA, previousSessionIDList = database_handler.queryStateVariables(pincode, [])
+                
+                if bool(slotNA) == False:
+                    response_body_dict["message"] = slotErrorMsg
+                    response_object["headers"]["body"] = response_body_dict
+                    send_notification.NotifyMultipleDevices(deviceIDList, "VacTrack Alert!!", "No Slots Available now for the pincode "+str(pincode))
+                    send_notification.DataPayLoadMultipleDevices(deviceIDList, response_object)
+                    slotAvailable = False
+                    slotNA = True
+                else:
+                    response_body_dict["message"] = slotErrorMsg
+                    response_object["headers"]["body"] = response_body_dict
+                    send_notification.DataPayLoadMultipleDevices(deviceIDList, response_object)
+                #Update the database with latest data
+                print("Update DB table with updated results")
+                database_handler.updateSlotData(response_body_dict["message"], pincode)
+                database_handler.updateDeviceInfo(pincode, deviceIDList, slotAvailable, slotNA)
+
+        else:
+            #fetch device Id's for the pincode
+            deviceIDList = database_handler.fetchDeviceID(pincode, [])
+            #fetch slot info for the pincode
+            slotAvailable, slotNA, previousSessionIDList = database_handler.queryStateVariables(pincode, [])
+            if bool(slotNA) == False:
+                response_body_dict["message"] = centerErrorMsg
+                response_object["headers"]["body"] = response_body_dict
+                send_notification.NotifyMultipleDevices(deviceIDList, "VacTrack Alert!!", "No Vaccination Centers available now for the pincode "+str(pincode))
+                send_notification.DataPayLoadMultipleDevices(deviceIDList, response_object)
+                slotAvailable = False
+                slotNA = True
+            else:
+                response_body_dict["message"] = centerErrorMsg
+                response_object["headers"]["body"] = response_body_dict
+                send_notification.DataPayLoadMultipleDevices(deviceIDList, response_object)
+            #Update the database with latest data
+            print("Update DB table with updated results")
+            database_handler.updateSlotData(response_body_dict["message"], pincode)
+            database_handler.updateDeviceInfo(pincode, deviceIDList, slotAvailable, slotNA)
+    except Exception as e:
+        print("Exception observed ",str(e))
+
+def filterInfo(indFilter, centerList, pincode, response_body_dict, response_object, slotErrorMsg):
+    try:
+        print("in the function filterInfo",indFilter)
+        filterList = list()
+        deviceIDList = list()
+        age = indFilter[0]
+        vaccine = indFilter[1]
+        previousSessionIDList = list()
+        currentSessionIDList = list()
+        
+        #set alarm and payload keys in response
+        response_body_dict["alarm"] = 0
+        response_body_dict["payload_number"] = 1
+        
+        #fetch device Id's for the combo
+        deviceIDList = database_handler.fetchDeviceID(pincode, indFilter)
+        if len(deviceIDList) == 0:
+            print("in filterDevID function. No devices found for this combo")
+            return
+        else:
+            #query SlotAvailable and SlotNA state from DB table SLOTDATA
+            slotAvailable, slotNA, previousSessionIDList = database_handler.queryStateVariables(pincode, indFilter)
+            #check for All filters condition
+            if age == "ALL" and vaccine == "ALL":
+                filterList = centerList
+                for center in centerList:
+                    currentSessionIDList.append(center["Session ID"])
+            elif age == "ALL":
+                for center in centerList:
+                    if center["Vaccine Name"] == vaccine:
+                        filterList.append(center)
+                        currentSessionIDList.append(center["Session ID"])
+            elif vaccine == "ALL":
+                for center in centerList:
+                    if str(center["Minimum Age Limit"]) == age:
+                        filterList.append(center)
+                        currentSessionIDList.append(center["Session ID"])
+            else:
+                for center in centerList:
+                    if str(center["Minimum Age Limit"]) == age and center["Vaccine Name"] == vaccine:
+                        filterList.append(center)
+                        currentSessionIDList.append(center["Session ID"])
+            #if centers are available for the filter of age and vaccine
+            if len(filterList) > 0:
+                #compare available data with previous data
+                if previousSessionIDList != None:
+                    for sessionID in currentSessionIDList:
+                        if sessionID not in previousSessionIDList:
+                            slotAvailable = 0
+                            break
+                if len(filterList) >= 10:
+                    payloadList = splitDataPayload(filterList)
+                else:
+                    payloadList = [filterList]
+                #loop for multiple payloads resulting from splitDataPayload
+                for payload in payloadList:
+                    if bool(slotAvailable) == False:
+                        response_body_dict["message"] = str(payload)
+                        response_object["headers"]["body"] = response_body_dict
+                        send_notification.NotifyMultipleDevices(deviceIDList, "VacTrack Alert!!", "Slots Available for the pincode "+str(pincode))
+                        response_body_dict["alarm"] = 1
+                        response_object["headers"]["body"] = response_body_dict
+                        send_notification.DataPayLoadMultipleDevices(deviceIDList, response_object)
+                        slotAvailable = True
+                        slotNA = False
+                    else:
+                        response_body_dict["message"] = str(payload)
+                        response_object["headers"]["body"] = response_body_dict
+                        send_notification.DataPayLoadMultipleDevices(deviceIDList, response_object)
+                    response_body_dict["payload_number"] = response_body_dict["payload_number"]+1
+                    response_body_dict["alarm"] = 0
+                #Update the database with latest data
+                print("Update DB table with updated results")
+                database_handler.updateDeviceInfo(pincode, deviceIDList, slotAvailable, slotNA, str(currentSessionIDList))
+            else:
+                #no slots available
+                if bool(slotNA) == False:
+                    response_body_dict["message"] = slotErrorMsg
+                    response_object["headers"]["body"] = response_body_dict
+                    send_notification.NotifyMultipleDevices(deviceIDList, "VacTrack Alert!!", "No Slots Available now for the pincode "+str(pincode))
+                    send_notification.DataPayLoadMultipleDevices(deviceIDList, response_object)
+                    slotAvailable = False
+                    slotNA = True
+                else:
+                    response_body_dict["message"] = slotErrorMsg
+                    response_object["headers"]["body"] = response_body_dict
+                    send_notification.DataPayLoadMultipleDevices(deviceIDList, response_object)
+                #Update the database with latest data
+                print("Update DB table with updated results")
+                database_handler.updateDeviceInfo(pincode, deviceIDList, slotAvailable, slotNA)
+    except Exception as e:
+        print("Exception occured in filterInfo "+str(e))
+        exc_info = sys.exc_info()
+        traceback.print_exception(*exc_info)
+        del exc_info
+
+def splitDataPayload(data):
+    print("in splitDataPayload() function")
+    try:
+        payloadCollection = list()
+        quotient = len(data)//10
+        reminder = len(data)%10
+        fromIndex = 0
+        for count in range(quotient):
+            payloadCollection.append(data[fromIndex:(10*(count+1))])
+            fromIndex = fromIndex + 10
+        payloadCollection.append(data[fromIndex:])
+    except Exception as e:
+        exc_info = sys.exc_info()
+        traceback.print_exception(*exc_info)
+        del exc_info
+    return payloadCollection
+    
+    
+def lambda_handler(event, context):
+    print("in lambda_handler function")
+    #local variables
+    deviceIDList = list()
+    pincodeList = list()
+    executor = ThreadPoolExecutor(9)
+    pincodeList = database_handler.fetchPinCode()
+    print("pincodeList ",pincodeList)
+    for pincode in pincodeList:
+        CheckAvailability(pincode, executor)
+    executor.shutdown(wait=True)
+    #release database connection
+    #database_handler.releaseDBConn()
+
+
+    

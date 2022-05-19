@@ -1,0 +1,71 @@
+import json
+import pymysql
+from pymysqlpool.pool import Pool
+import traceback
+import sys
+
+#global variables
+endPoint = 'vactrackdb.cecpyuwbpdmi.ap-south-1.rds.amazonaws.com'
+userName = "admin"
+password = 'Aaroh!12#N'
+dbName = 'testDB'
+pool_obj = Pool(host = endPoint, port = 3306, user = userName, password = password, db = dbName)
+pool_obj.init()
+connection = pool_obj.get_conn()
+
+def deleteData(deviceID, pincode, ageGroup, vaccine):
+    #function return variable
+    response_object = dict()
+    response_object["statuscode"] = 200
+    response_object["headers"] = {}
+    response_object["headers"]["Content-Type"] = "application/json"
+    delResponse = None
+    try:
+        print("in deleteData function")
+        #initialize cursor object
+        cursor = connection.cursor()
+        #create deletion query
+        delQuery = "DELETE from DEVICEINFOCLONE where DeviceID = %s and PinCode = %s and AgeGroup = %s and Vaccine = %s"
+        values = (deviceID, pincode, ageGroup, vaccine)
+        #execute delete query
+        delResponse = cursor.execute(delQuery, values)
+        connection.commit()
+        selectQuery = "SELECT * from DEVICEINFOCLONE where PinCode = %s"
+        selectResponse = cursor.execute(selectQuery, pincode)
+        if selectResponse > 0:
+            print("Still there is subscription present for pincode ",pincode)
+        else:
+            print("There is no more subscription for pincode ",pincode)
+            delQuery = "DELETE from SLOTDATACLONE where PinCode = %s"
+            #execute delete query
+            cursor.execute(delQuery, pincode)
+            connection.commit()
+        #close the cursor
+        cursor.close()
+        #return statement
+        response_object["headers"]["body"] = delResponse
+        return response_object
+    except Exception as e:
+        print("Exception occured while deleting data to table DEVICEINFOCLONE ",str(e))
+        exc_info = sys.exc_info()
+        traceback.print_exception(*exc_info)
+        del exc_info
+        cursor.close()
+        response_object["headers"]["body"] = 0
+        return response_object
+
+def lambda_handler(event, context):
+    try:
+        print("in lambda_handler function")
+        deviceID = event["deviceID"]
+        pincode = event["pincode"]
+        ageGroup = event["ageGroup"]
+        vaccine = event["vaccineName"].upper()
+        if ageGroup == None or ageGroup == "":
+            ageGroup = "ALL"
+        if vaccine == None or vaccine == "":
+            vaccine = "ALL"
+        response = deleteData(deviceID, pincode, ageGroup, vaccine)
+        return response
+    except Exception as e:
+        print("Exception occured : ",str(e))

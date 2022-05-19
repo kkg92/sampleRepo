@@ -1,0 +1,27 @@
+from pyfcm import FCMNotification
+
+def SendNotification(deviceID, msgBody, dataPayload):
+    print("in SendNotification API with dveiceID {0}, msgBody {1} and dataPayload {2}".format(deviceID,msgBody,dataPayload))
+    apiKey = "AAAAkr_rZlg:APA91bGhL8ftpFaumlUQFz1ODPSe2gL-8OAfjI28PsIVaPJ68rmFwal33IUi2OdawCq9eJdPIBgm3nZ6m0ySX4EHpMT1XC7UOOOHNmYivq1SK9yy_xqK1Gj4Y6z_zD2FEtl-dw1J-vRW"
+    pushMsg = FCMNotification(api_key = apiKey)
+    result = pushMsg.notify_single_device(registration_id = deviceID, message_body = msgBody, data_message = dataPayload, time_to_live = 43200)
+    
+def SendDataPayload(deviceID, dataPayload):
+    print("in SendDataPayload API with dveiceID {0} and dataPayload {1}".format(deviceID,dataPayload))
+    apiKey = "AAAAkr_rZlg:APA91bGhL8ftpFaumlUQFz1ODPSe2gL-8OAfjI28PsIVaPJ68rmFwal33IUi2OdawCq9eJdPIBgm3nZ6m0ySX4EHpMT1XC7UOOOHNmYivq1SK9yy_xqK1Gj4Y6z_zD2FEtl-dw1J-vRW"
+    pushMsg = FCMNotification(api_key = apiKey)
+    result = pushMsg.single_device_data_message(registration_id = deviceID, data_message = dataPayload)
+    
+def NotifyMultipleDevices(deviceIDList, msgTitle, msgBody):
+    print("in NotifyMultipleDevices API with deviceIDList {0}, msgBody {1}".format(deviceIDList,msgBody))
+    apiKey = "AAAAkr_rZlg:APA91bGhL8ftpFaumlUQFz1ODPSe2gL-8OAfjI28PsIVaPJ68rmFwal33IUi2OdawCq9eJdPIBgm3nZ6m0ySX4EHpMT1XC7UOOOHNmYivq1SK9yy_xqK1Gj4Y6z_zD2FEtl-dw1J-vRW"
+    pushMsg = FCMNotification(api_key = apiKey)
+    result = pushMsg.notify_multiple_devices(registration_ids = deviceIDList, message_title = msgTitle, message_body = msgBody, time_to_live = 43200)
+    #call DataPayLoadMultipleDevices function
+    #DataPayLoadMultipleDevices(deviceIDList, dataPayload)
+    
+def DataPayLoadMultipleDevices(deviceIDList, dataPayload):
+    print("in DataPayLoadMultipleDevices() API with deviceIDList {0} and dataPayload {1}".format(deviceIDList,dataPayload))
+    apiKey = "AAAAkr_rZlg:APA91bGhL8ftpFaumlUQFz1ODPSe2gL-8OAfjI28PsIVaPJ68rmFwal33IUi2OdawCq9eJdPIBgm3nZ6m0ySX4EHpMT1XC7UOOOHNmYivq1SK9yy_xqK1Gj4Y6z_zD2FEtl-dw1J-vRW"
+    pushMsg = FCMNotification(api_key = apiKey)
+    result = pushMsg.multiple_devices_data_message(registration_ids = deviceIDList, data_message = dataPayload)

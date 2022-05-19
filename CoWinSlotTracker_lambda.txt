@@ -1,0 +1,136 @@
+import os
+import sys
+import urllib.request as url
+from urllib.error import URLError
+from urllib.error import HTTPError
+import json
+import datetime
+import time
+import threading
+
+#User defined modules
+import send_notification
+
+#global variables
+slotAvailable = False
+slotNA = False
+
+#function to invoke a thread that sends notification to the mobile device
+'''def SendAlert(deviceID, response_object, msg = None):
+    sendAlertThread = threading.Thread(target = send_notification.SendNotification, args = (deviceID, msg, response_object))
+    sendAlertThread.start()
+    sendAlertThread.join()'''
+
+def CheckAvailability(pincode, deviceID, currentProcessID):
+    try:
+        print("in CheckAvailability function")
+        #global variables
+        global slotAvailable,slotNA
+        
+        #local variables
+        output_list = list()
+        response_object = dict()
+        response_object["statuscode"] = 200
+        response_object["headers"] = {}
+        response_object["headers"]["Content-Type"] = "application/json"
+        response_body_dict = {"key":pincode, "processID":currentProcessID}
+        response = None
+        
+        #check current date
+        date = datetime.date.today()
+        date_str = str(date.day)+"-"+str(date.month)+"-"+str(date.year)
+        
+        #check currentTime
+        currentHour = datetime.datetime.now().time().hour
+        currentMinute = datetime.datetime.now().time().minute
+        
+        webLink = "https://cdn-api.co-vin.in/api/v2/appointment/sessions/public/calendarByPin?pincode="+pincode+"&date="+date_str
+        
+        #Error messages to the client
+        slotErrorMsg = "Could not find any Slots available till now for the pincode "+pincode+\
+        ". Sit back and relax. I will keep a check and notify you as soon as slots are available."
+        centerErrorMsg = "Could not find a Vaccination center till now for the pincode "+pincode+\
+        ". Sit back and relax. I will keep a check and inform you as soon as slots are available."
+
+        try:
+            req_obj = url.Request(url=webLink, data = None, headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)Chrome/90.0.4430.93 Safari/537.36"})
+            response = url.urlopen(req_obj)
+        except HTTPError as e:
+            httpErrorMsg = e.code
+            print("Exception observed while accessing Cowin url ",httpErrorMsg)
+            response_body_dict["message"] = "Not able to reach CoWin server!! Let me retry"
+            response_object["headers"]["body"] = response_body_dict
+            send_notification.SendDataPayload(deviceID, response_object)
+            return None
+        except URLError as e:
+            urlErrorMsg = e.reason[1]
+            print("unable to reach this url ",urlErrorMsg)
+            response_body_dict["message"] = urlErrorMsg
+            response_object["headers"]["body"] = response_body_dict
+            send_notification.SendDataPayload(deviceID, response_object)
+            return None
+
+        response_dict = json.loads(response.read())
+        centers_list = response_dict["centers"]
+        if len(centers_list) > 0:
+            for center in centers_list:
+                for session in center["sessions"]:
+                    if session["available_capacity"] >= 1:
+                        center_available = dict()
+                        center_available["Centre Name"] = center["name"]
+                        center_available["Centre Address"] = center["address"]
+                        center_available["Date"] = session["date"]
+                        center_available["Slots available"] = session["available_capacity"]
+                        center_available["Vaccine Name"] = session["vaccine"]
+                        center_available["Minimum Age Limit"] = session["min_age_limit"]
+                        output_list.append(json.dumps(center_available))
+            if len(output_list) > 0:
+                if slotAvailable == False:
+                    response_body_dict["message"] = str(output_list)
+                    response_object["headers"]["body"] = response_body_dict
+                    send_notification.SendNotification(deviceID, "Alert!!! Slots available for the pincode "+pincode, response_object)
+                    slotAvailable = True
+                    slotNA = False
+                else:
+                    response_body_dict["message"] = str(output_list)
+                    response_object["headers"]["body"] = response_body_dict
+                    send_notification.SendDataPayload(deviceID, response_object)
+                    #send_notification.SendNotification(deviceID, "Alert!!! Slots available for the pincode "+pincode, response_object)
+            else:
+                if slotNA == False:
+                    response_body_dict["message"] = slotErrorMsg
+                    response_object["headers"]["body"] = response_body_dict
+                    send_notification.SendNotification(deviceID, "No slots available now for the pincode "+pincode, response_object)
+                    slotAvailable = False
+                    slotNA = True
+                else:
+                    response_body_dict["message"] = slotErrorMsg
+                    response_object["headers"]["body"] = response_body_dict
+                    send_notification.SendDataPayload(deviceID, response_object)
+        else:
+            if slotNA == False:
+                response_body_dict["message"] = centerErrorMsg
+                response_object["headers"]["body"] = response_body_dict
+                send_notification.SendNotification(deviceID, "No Vaccination Centers available now for the pincode "+pincode, response_object)
+                slotAvailable = False
+                slotNA = True
+            else:
+                response_body_dict["message"] = centerErrorMsg
+                response_object["headers"]["body"] = response_body_dict
+                send_notification.SendDataPayload(deviceID, response_object)
+    except Exception as e:
+        print("Exception observed ",str(e))
+
+def lambda_handler(event, context):
+    print("in lambda_handler function")
+    pincode = event["pincode"]
+    deviceID = event["deviceID"]
+    currentProcessID = os.getpid()
+    count = 0
+    print("pincode received is ",pincode)
+    print("deviceID received is ",deviceID)
+    while(count<5):
+        CheckAvailability(pincode, deviceID,currentProcessID)
+        time.sleep(60)
+        count = count+1
+    #CheckAvailability(pincode, deviceID,currentProcessID)
